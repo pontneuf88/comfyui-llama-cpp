@@ -26,9 +26,11 @@ For vision workflows, start `llama-server` with a multimodal model and its match
 - `llama.cpp Connectivity`
   - Base URL defaults to `http://127.0.0.1:8080`.
   - Use `Reconnect` to load model IDs from `/v1/models`.
+  - `request_timeout` controls how long ComfyUI waits for a non-streaming response.
 - `llama.cpp Options`
   - Sends enabled sampling options to `/v1/chat/completions`.
   - `num_predict` is sent as `max_tokens`.
+  - If no options node sets `num_predict`, requests use `max_tokens: 512` to avoid runaway non-streaming generations.
 - `llama.cpp Generate`
   - One-shot chat-completions wrapper.
   - Optional image input is sent as OpenAI-compatible `image_url` content parts.
@@ -58,3 +60,13 @@ When `think` is enabled, the request includes:
 ```
 
 If the server returns `reasoning_content`, it is exposed through the `thinking` output.
+
+## Timeout notes
+
+The node uses non-streaming chat completions. Long responses therefore return only when generation finishes.
+
+If ComfyUI times out while llama-server is still decoding tokens:
+
+- lower `num_predict` in `llama.cpp Options`;
+- increase `request_timeout` in `llama.cpp Connectivity`;
+- or start `llama-server` with a larger `--timeout`.

@@ -22,6 +22,8 @@ if TYPE_CHECKING:
 
 CATEGORY = "llama.cpp"
 DEFAULT_URL = "http://127.0.0.1:8080"
+DEFAULT_REQUEST_TIMEOUT = 600
+DEFAULT_MAX_TOKENS = 512
 HISTORY_DIR = os.path.join(os.path.dirname(os.path.realpath(__file__)), "saved_context")
 
 
@@ -38,7 +40,12 @@ def _normalise_url(url: str) -> str:
     return url.rstrip("/")
 
 
-def _json_request(url: str, path: str, payload: dict[str, Any] | None = None) -> dict[str, Any]:
+def _json_request(
+    url: str,
+    path: str,
+    payload: dict[str, Any] | None = None,
+    timeout: int = DEFAULT_REQUEST_TIMEOUT,
+) -> dict[str, Any]:
     target = f"{_normalise_url(url)}{path}"
     data = None
     method = "GET"
@@ -51,11 +58,16 @@ def _json_request(url: str, path: str, payload: dict[str, Any] | None = None) ->
 
     request = urllib.request.Request(target, data=data, headers=headers, method=method)
     try:
-        with urllib.request.urlopen(request, timeout=120) as response:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
             body = response.read().decode("utf-8")
     except urllib.error.HTTPError as exc:
         detail = exc.read().decode("utf-8", errors="replace")
         raise RuntimeError(f"llama.cpp server returned HTTP {exc.code}: {detail}") from exc
+    except TimeoutError as exc:
+        raise RuntimeError(
+            f"Timed out waiting for llama.cpp server after {timeout} seconds. "
+            "Reduce max_tokens, increase request_timeout, or start llama-server with a larger --timeout."
+        ) from exc
     except urllib.error.URLError as exc:
         raise RuntimeError(f"Could not connect to llama.cpp server at {target}: {exc.reason}") from exc
 
@@ -177,6 +189,7 @@ def _build_request(
         "stream": False,
     }
     payload.update(_filter_options(options))
+    payload.setdefault("max_tokens", DEFAULT_MAX_TOKENS)
 
     if output_format == "json":
         payload["response_format"] = {"type": "json_object"}
@@ -187,8 +200,12 @@ def _build_request(
     return payload
 
 
-def _run_chat(url: str, payload: dict[str, Any]) -> tuple[str, str | None, dict[str, Any]]:
-    response = _json_request(url, "/v1/chat/completions", payload)
+def _run_chat(
+    url: str,
+    payload: dict[str, Any],
+    timeout: int = DEFAULT_REQUEST_TIMEOUT,
+) -> tuple[str, str | None, dict[str, Any]]:
+    response = _json_request(url, "/v1/chat/completions", payload, timeout=timeout)
     choices = response.get("choices", [])
     if not choices:
         raise RuntimeError(f"llama.cpp response did not contain choices: {response}")
@@ -348,6 +365,16 @@ class LlamaCppConnectivity:
                         "tooltip": "Select a model exposed by /v1/models. Use Reconnect after starting llama-server.",
                     },
                 ),
+                "request_timeout": (
+                    "INT",
+                    {
+                        "default": DEFAULT_REQUEST_TIMEOUT,
+                        "min": 30,
+                        "max": 7200,
+                        "step": 30,
+                        "tooltip": "Seconds to wait for a non-streaming chat completion response.",
+                    },
+                ),
             },
         }
 
@@ -357,8 +384,8 @@ class LlamaCppConnectivity:
     CATEGORY = CATEGORY
     DESCRIPTION = "Connection settings for a llama.cpp server OpenAI-compatible API."
 
-    def llamacpp_connectivity(self, url: str, model: str):
-        return ({"url": url, "model": model},)
+    def llamacpp_connectivity(self, url: str, model: str, request_timeout: int):
+        return ({"url": url, "model": model, "request_timeout": request_timeout},)
 
 
 class LlamaCppGenerate:
@@ -416,7 +443,8 @@ class LlamaCppGenerate:
         if debug_print:
             _debug_request("llama.cpp generate", meta["connectivity"]["url"], payload)
 
-        result, thinking, response = _run_chat(meta["connectivity"]["url"], payload)
+        timeout = meta["connectivity"].get("request_timeout", DEFAULT_REQUEST_TIMEOUT)
+        result, thinking, response = _run_chat(meta["connectivity"]["url"], payload, timeout=timeout)
         if debug_print:
             _debug_response("llama.cpp generate", response)
 
@@ -489,7 +517,8 @@ class LlamaCppChat:
         if debug_print:
             _debug_request("llama.cpp chat", meta["connectivity"]["url"], payload)
 
-        result, thinking, response = _run_chat(meta["connectivity"]["url"], payload)
+        timeout = meta["connectivity"].get("request_timeout", DEFAULT_REQUEST_TIMEOUT)
+        result, thinking, response = _run_chat(meta["connectivity"]["url"], payload, timeout=timeout)
         if debug_print:
             _debug_response("llama.cpp chat", response)
 
