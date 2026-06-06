@@ -1,155 +1,60 @@
-# ComfyUI Ollama
+# ComfyUI llama.cpp
 
-Custom [ComfyUI](https://github.com/comfyanonymous/ComfyUI) Nodes for interacting with [Ollama](https://ollama.com/) using the [ollama python client](https://github.com/ollama/ollama-python).
+ComfyUI custom nodes for calling a local or remote `llama-server` through the llama.cpp OpenAI-compatible API.
 
-Integrate the power of LLMs into ComfyUI workflows easily or just experiment with LLM inference.
+This fork is based on `stavsap/comfyui-ollama`, but it is llama.cpp specific and does not depend on Ollama or the Ollama Python client.
 
-To use this properly, you would need a running Ollama server reachable from the host that is running ComfyUI.
+## Requirements
 
-<a href="https://www.buymeacoffee.com/stavsapq" target="_blank"><img src="https://cdn.buymeacoffee.com/buttons/default-orange.png" alt="Buy Me A Coffee" height="40" width="174"></a>
+- ComfyUI
+- A running llama.cpp server exposing:
+  - `GET /v1/models`
+  - `POST /v1/chat/completions`
 
-![pic](.meta/basic-example.jpg)
+No extra Python package is required by this custom node.
 
-## Installation
+## llama-server example
 
-### 1. Install ollama server on the desired host
-
-<a href="https://ollama.com/" target="_blank">
-  <img src="https://img.shields.io/badge/v0.5.7-green.svg?style=for-the-badge&labelColor=gray&label=Ollama&color=blue" alt=""/>
-</a>
-
-<details>
-<summary><b>Instructions</b></summary>
-
-<a href="https://ollama.com/download/Ollama-darwin.zip" target="_blank">Download for macOS</a>
-
-<a href="https://ollama.com/download/OllamaSetup.exe" target="_blank">Download for Windows</a>
-
-Install on Linux
-
-```shell
-curl -fsSL https://ollama.com/install.sh | sh
+```bash
+llama-server -m /path/to/model.gguf --host 127.0.0.1 --port 8080
 ```
 
-<a href="https://hub.docker.com/r/ollama/ollama" target="_blank">Docker Installation</a>
-
-CPU only
-
-```shell
-docker run -d -p 11434:11434 -v ollama:/root/.ollama --name ollama ollama/ollama
-```
-
-NVIDIA GPU
-
-```shell
-docker run -d -p 11434:11434 --gpus=all -v ollama:/root/.ollama --name ollama  ollama/ollama
-```
-
-</details>
-
-### 2. Install the custom nodes
-
-Use ComfyUI's built-in extension manager to install the nodes. Search for `comfyui-ollama` by `Stav Sapir`.
-
-**Or**
-
-If you prefer [ComfyUI-Manager](https://github.com/ltdrdata/ComfyUI-Manager), search for `ollama` and select the one by `stavsap`
-
-![pic](.meta/manager-install.png)
-
-**Or**
-
-1. git clone into the `custom_nodes` folder inside your ComfyUI installation or download as zip and unzip the contents to `custom_nodes/compfyui-ollama`.
-2. `pip install -r requirements.txt`
-3. Start/restart ComfyUI
-
-### Configuration (Ollama Key)
-
-If you are using **Ollama Cloud templates** that require authentication, you must provide your Ollama public key.
-
-You can do this automatically with the CLI:
-```shell
-ollama signin
-```
-
-Or by manually adding your public key at [ollama.com/settings/key](https://ollama.com/settings/keys).
-
-Your public key is located at:
-| OS | Path to id_ed25519.pub |
-|----|-----------------------|
-| macOS | ~/.ollama/id_ed25519.pub |
-| Linux | /usr/share/ollama/.ollama/id_ed25519.pub |
-| Windows | C:\Users\<username>\.ollama\id_ed25519.pub |
-
-See Ollama's [FAQ](https://docs.ollama.com/faq#where-can-i-find-my-ollama-public-key%3F) for more details.
+For vision workflows, start `llama-server` with a multimodal model and its matching projector/options as required by your llama.cpp build and model.
 
 ## Nodes
 
-### OllamaGenerate
+- `llama.cpp Connectivity`
+  - Base URL defaults to `http://127.0.0.1:8080`.
+  - Use `Reconnect` to load model IDs from `/v1/models`.
+- `llama.cpp Options`
+  - Sends enabled sampling options to `/v1/chat/completions`.
+  - `num_predict` is sent as `max_tokens`.
+- `llama.cpp Generate`
+  - One-shot chat-completions wrapper.
+  - Optional image input is sent as OpenAI-compatible `image_url` content parts.
+  - `keep_context` keeps the conversation in the node instance.
+- `llama.cpp Chat`
+  - Multi-turn chat with JSON history output.
+  - Pass `history` into another chat node to continue the same conversation.
+- `llama.cpp Save History` and `llama.cpp Load History`
+  - Save/load history strings as PNG metadata under `saved_context`.
 
-A node that provides ability to set the system prompt and the prompt.
+## JSON output
 
-Ability to save context locally in the node `enable/disable`
+Selecting `json` adds:
 
-Inputs:
+```json
+{"response_format": {"type": "json_object"}}
+```
 
--   **OllamaConnectivity** (optional)
--   **OllamaOptions** (optional)
--   **images** (optional)
--   **context** (optional), a context from other OllamaConnectivity
--   **meta** (optional), passing metadata of the OllamaConnectivity and OllamaOptions from other OllamaGenerate node.
+The model still needs to be instructed to return valid JSON in the prompt or system prompt.
 
-**Notes:**
+## Thinking
 
--   For this node to be operational, **OllamaConnectivity** or **meta** must be inputted!.
--   If **images** are inputted and a chain of **meta** usage is made, all the **images** need to be passed as well to the next **OllamaConnectivity** nodes.
+When `think` is enabled, the request includes:
 
-## OllamaChat
+```json
+{"chat_template_kwargs": {"enable_thinking": true}}
+```
 
-A node for **conversational interaction** using the dedicated Ollama chat endpoint (`ollama.chat`). It manages the full conversation history natively and allows for chained sequences of chat nodes.
-
--   **Functionality:** Unlike `OllamaGenerate`, this node is designed specifically for multi-turn conversations and cloud models with your Ollama public key (see the Configuration section).
--   **Key Features:**
-    -   Conversation history is handled natively within the node instance.
-    -   Dedicated history outputs for **chaining multiple chat nodes**.
-    -   Option to **reset** the current conversation history on demand.
-
-Inputs:
-
--   **OllamaConnectivity** (optional)
--   **OllamaOptions** (optional)
--   **images** (optional)
--   **meta** (optional), passing metadata of the OllamaConnectivity and
-    OllamaOptions from other OllamaChat node.
--   **history** (optional), passing history ID from other OllamaChat node.
-
-Outputs:
-
--   **result**: The generated text
--   **thinking**: The thinking text
--   **meta**: The metadata to pass to the next OllamaChat node
--   **history**: The history ID to pass to the next OllamaChat node
-
-### OllamaConnectivity
-
-A node responsible only fot the connectivity to the ollama server
-
-### OllamaOptions
-
-A node for full control of the ollama api options.
-
-For an option to take effect, each option have also `enable/disable`, enabled options are passed to api call to ollama server.
-
-Ollama API options can be found in [this table](https://github.com/ollama/ollama/blob/main/docs/modelfile.md#valid-parameters-and-values).
-
-**Note**: There is an additional option `debug` that enables debug print in the cli, its not part of ollama api.
-
-### Deprecated nodes
-
-Old V1 nodes are still available, please replace them with the above ones. Here's the [documentation of V1](V1_nodes.md) nodes.
-
-## Usage Example
-
-Please see the `example_workflows` folder or use ComfyUI's template browser.
-
-The custom Text Nodes in the examples can be found here: https://github.com/pythongosssss/ComfyUI-Custom-Scripts
+If the server returns `reasoning_content`, it is exposed through the `thinking` output.

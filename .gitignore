@@ -4,3 +4,4 @@ saved_context
 __pycache__
 .env
 .vscode
+*.md

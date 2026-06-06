@@ -1,15 +1,15 @@
 [project]
-name = "comfyui-ollama"
-description = "Custom ComfyUI Nodes for interacting with [a/Ollama](https://ollama.com/) using the [a/ollama python client](https://github.com/ollama/ollama-python).\nIntegrate the power of LLMs into CompfyUI workflows easily."
-version = "2.1.0"
+name = "comfyui-llama-cpp"
+description = "Custom ComfyUI nodes for interacting with llama.cpp server through its OpenAI-compatible API."
+version = "0.1.0"
 license = { file = "LICENSE" }
-dependencies = ["ollama"]
+dependencies = []
 
 [project.urls]
-Repository = "https://github.com/stavsap/comfyui-ollama"
+Repository = "https://github.com/ggml-org/llama.cpp"
 #  Used by Comfy Registry https://comfyregistry.org
 
 [tool.comfy]
-PublisherId = "stavsap"
-DisplayName = "comfyui-ollama"
+PublisherId = "local"
+DisplayName = "comfyui-llama-cpp"
 Icon = ""

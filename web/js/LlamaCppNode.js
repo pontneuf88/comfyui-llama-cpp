@@ -1,16 +1,16 @@
 import { app } from "/scripts/app.js";
 
 app.registerExtension({
-  name: "Comfy.OllamaNode",
+  name: "Comfy.LlamaCppNode",
   aboutPageBadges: [
     {
-      label: "ComfyUI-Ollama",
-      url: "https://github.com/stavsap/comfyui-ollama",
+      label: "ComfyUI llama.cpp",
+      url: "https://github.com/ggml-org/llama.cpp",
       icon: "pi pi-github",
     },
   ],
   async beforeRegisterNodeDef(nodeType, nodeData, app) {
-    if (["OllamaGenerate", "OllamaGenerateAdvance", "OllamaVision", "OllamaConnectivityV2"].includes(nodeData.name)) {
+    if (["LlamaCppConnectivity"].includes(nodeData.name)) {
       const originalNodeCreated = nodeType.prototype.onNodeCreated;
       nodeType.prototype.onNodeCreated = async function () {
         if (originalNodeCreated) {
@@ -19,13 +19,10 @@ app.registerExtension({
 
         const urlWidget = this.widgets.find((w) => w.name === "url");
         const modelWidget = this.widgets.find((w) => w.name === "model");
-        let refreshButtonWidget = {};
-        if (nodeData.name === "OllamaConnectivityV2") {
-          refreshButtonWidget = this.addWidget("button", "🔄 Reconnect");
-        }
+        const refreshButtonWidget = this.addWidget("button", "Reconnect");
 
         const fetchModels = async (url) => {
-          const response = await fetch("/ollama/get_models", {
+          const response = await fetch("/llamacpp/get_models", {
             method: "POST",
             headers: {
               "Content-Type": "application/json",
@@ -40,12 +37,13 @@ app.registerExtension({
             console.debug("Fetched models:", models);
             return models;
           } else {
-            throw new Error(response);
+            const error = await response.json().catch(() => ({}));
+            throw new Error(error.error || response.statusText);
           }
         };
 
         const updateModels = async () => {
-          refreshButtonWidget.name = "⏳ Fetching...";
+          refreshButtonWidget.name = "Fetching...";
           const url = urlWidget.value;
 
           let models = [];
@@ -55,11 +53,11 @@ app.registerExtension({
             console.error("Error fetching models:", error);
             app.extensionManager.toast.add({
               severity: "error",
-              summary: "Ollama connection error",
-              detail: "Make sure Ollama server is running",
+              summary: "llama.cpp connection error",
+              detail: "Make sure llama-server is running and exposes /v1/models",
               life: 5000,
             });
-            refreshButtonWidget.name = "🔄 Reconnect";
+            refreshButtonWidget.name = "Reconnect";
             this.setDirtyCanvas(true);
             return;
           }
@@ -76,7 +74,7 @@ app.registerExtension({
             modelWidget.value = models[0]; // set first as default.
           }
 
-          refreshButtonWidget.name = "🔄 Reconnect";
+          refreshButtonWidget.name = "Reconnect";
           this.setDirtyCanvas(true);
           console.debug("Updated modelWidget.value:", modelWidget.value);
         };
