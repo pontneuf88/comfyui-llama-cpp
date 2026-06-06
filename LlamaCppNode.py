@@ -181,15 +181,16 @@ def _build_request(
     messages: list[dict[str, Any]],
     think: bool,
     output_format: str,
+    max_tokens: int,
     options: dict[str, Any] | None,
 ) -> dict[str, Any]:
     payload: dict[str, Any] = {
         "model": model,
         "messages": messages,
         "stream": False,
+        "max_tokens": max_tokens,
     }
     payload.update(_filter_options(options))
-    payload.setdefault("max_tokens", DEFAULT_MAX_TOKENS)
 
     if output_format == "json":
         payload["response_format"] = {"type": "json_object"}
@@ -401,6 +402,16 @@ class LlamaCppGenerate:
                 "think": ("BOOLEAN", {"default": False}),
                 "keep_context": ("BOOLEAN", {"default": False}),
                 "format": (["text", "json"],),
+                "max_tokens": (
+                    "INT",
+                    {
+                        "default": DEFAULT_MAX_TOKENS,
+                        "min": 1,
+                        "max": 32768,
+                        "step": 1,
+                        "tooltip": "Maximum number of tokens to generate. If llama.cpp Options enables num_predict, that value overrides this.",
+                    },
+                ),
             },
             "optional": {
                 "connectivity": ("LLAMACPP_CONNECTIVITY", {"forceInput": False}),
@@ -424,6 +435,7 @@ class LlamaCppGenerate:
         think: bool,
         keep_context: bool,
         format: str,
+        max_tokens: int,
         context: str | None = None,
         options: dict[str, Any] | None = None,
         connectivity: dict[str, Any] | None = None,
@@ -439,7 +451,7 @@ class LlamaCppGenerate:
         messages = _apply_system_message(messages, system)
         messages.append({"role": "user", "content": _images_to_content_parts(prompt, images)})
 
-        payload = _build_request(meta["connectivity"]["model"], messages, think, format, meta.get("options"))
+        payload = _build_request(meta["connectivity"]["model"], messages, think, format, max_tokens, meta.get("options"))
         if debug_print:
             _debug_request("llama.cpp generate", meta["connectivity"]["url"], payload)
 
@@ -464,6 +476,16 @@ class LlamaCppChat:
                 "prompt": ("STRING", {"multiline": True, "default": "What is art?"}),
                 "think": ("BOOLEAN", {"default": False}),
                 "format": (["text", "json"],),
+                "max_tokens": (
+                    "INT",
+                    {
+                        "default": DEFAULT_MAX_TOKENS,
+                        "min": 1,
+                        "max": 32768,
+                        "step": 1,
+                        "tooltip": "Maximum number of tokens to generate. If llama.cpp Options enables num_predict, that value overrides this.",
+                    },
+                ),
             },
             "optional": {
                 "connectivity": ("LLAMACPP_CONNECTIVITY", {"forceInput": False}),
@@ -489,6 +511,7 @@ class LlamaCppChat:
         think: bool,
         unique_id: str,
         format: str,
+        max_tokens: int,
         options: dict[str, Any] | None = None,
         connectivity: dict[str, Any] | None = None,
         images: list[torch.Tensor] | None = None,
@@ -513,7 +536,7 @@ class LlamaCppChat:
         messages = _apply_system_message(messages, system)
         messages.append({"role": "user", "content": _images_to_content_parts(prompt, images)})
 
-        payload = _build_request(meta["connectivity"]["model"], messages, think, format, meta.get("options"))
+        payload = _build_request(meta["connectivity"]["model"], messages, think, format, max_tokens, meta.get("options"))
         if debug_print:
             _debug_request("llama.cpp chat", meta["connectivity"]["url"], payload)
 

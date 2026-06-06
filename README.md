@@ -30,14 +30,15 @@ For vision workflows, start `llama-server` with a multimodal model and its match
 - `llama.cpp Options`
   - Sends enabled sampling options to `/v1/chat/completions`.
   - `num_predict` is sent as `max_tokens`.
-  - If no options node sets `num_predict`, requests use `max_tokens: 512` to avoid runaway non-streaming generations.
 - `llama.cpp Generate`
   - One-shot chat-completions wrapper.
   - Optional image input is sent as OpenAI-compatible `image_url` content parts.
   - `keep_context` keeps the conversation in the node instance.
+  - `max_tokens` controls the maximum response length.
 - `llama.cpp Chat`
   - Multi-turn chat with JSON history output.
   - Pass `history` into another chat node to continue the same conversation.
+  - `max_tokens` controls the maximum response length.
 - `llama.cpp Save History` and `llama.cpp Load History`
   - Save/load history strings as PNG metadata under `saved_context`.
 
@@ -67,6 +68,7 @@ The node uses non-streaming chat completions. Long responses therefore return on
 
 If ComfyUI times out while llama-server is still decoding tokens:
 
-- lower `num_predict` in `llama.cpp Options`;
+- lower `max_tokens` in `llama.cpp Generate` or `llama.cpp Chat`;
+- or lower `num_predict` in `llama.cpp Options` if that option is enabled;
 - increase `request_timeout` in `llama.cpp Connectivity`;
 - or start `llama-server` with a larger `--timeout`.
