@@ -35,10 +35,12 @@ For vision workflows, start `llama-server` with a multimodal model and its match
   - Optional image input is sent as OpenAI-compatible `image_url` content parts.
   - `keep_context` keeps the conversation in the node instance.
   - `max_tokens` controls the maximum response length.
+  - `send_on_change_only` reuses the previous result when all request inputs are unchanged.
 - `llama.cpp Chat`
   - Multi-turn chat with JSON history output.
   - Pass `history` into another chat node to continue the same conversation.
   - `max_tokens` controls the maximum response length.
+  - `send_on_change_only` reuses the previous result for the same node when all request inputs are unchanged.
 - `llama.cpp Save History` and `llama.cpp Load History`
   - Save/load history strings as PNG metadata under `saved_context`.
 

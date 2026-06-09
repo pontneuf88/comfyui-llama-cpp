@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
 import os
 import random
@@ -34,6 +35,7 @@ class ChatSession:
 
 
 CHAT_SESSIONS: dict[str, ChatSession] = {}
+CHAT_RESPONSE_CACHE: dict[str, tuple[str, tuple[Any, ...]]] = {}
 
 
 def _normalise_url(url: str) -> str:
@@ -174,6 +176,74 @@ def _text_from_content(content: Any) -> str:
                 parts.append(str(part.get("text", "")))
         return "\n".join(parts)
     return str(content)
+
+
+def _stable_hash(value: Any) -> str:
+    encoded = json.dumps(value, ensure_ascii=False, sort_keys=True, default=str).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def _images_cache_fingerprint(images: list[torch.Tensor] | None) -> list[dict[str, Any]]:
+    if images is None:
+        return []
+
+    fingerprints: list[dict[str, Any]] = []
+    for image in images:
+        array = image.detach().cpu().contiguous().numpy()
+        digest = hashlib.sha256(array.tobytes()).hexdigest()
+        fingerprints.append(
+            {
+                "shape": list(array.shape),
+                "dtype": str(array.dtype),
+                "sha256": digest,
+            }
+        )
+    return fingerprints
+
+
+def _llamacpp_input_key(
+    *,
+    node_type: str,
+    system: str,
+    prompt: str,
+    think: bool,
+    output_format: str,
+    max_tokens: int,
+    meta: dict[str, Any],
+    images: list[torch.Tensor] | None,
+    context: str | None = None,
+    history: str | None = None,
+    keep_context: bool | None = None,
+    reset_session: bool | None = None,
+) -> str:
+    return _stable_hash(
+        {
+            "node_type": node_type,
+            "system": system,
+            "prompt": prompt,
+            "think": think,
+            "format": output_format,
+            "max_tokens": max_tokens,
+            "connectivity": meta.get("connectivity"),
+            "options": meta.get("options"),
+            "images": _images_cache_fingerprint(images),
+            "context": context,
+            "history": history,
+            "keep_context": keep_context,
+            "reset_session": reset_session,
+        }
+    )
+
+
+def _cache_meta(
+    meta: dict[str, Any] | None,
+    connectivity: dict[str, Any] | None,
+    options: dict[str, Any] | None,
+) -> dict[str, Any]:
+    try:
+        return _resolve_meta(meta, connectivity, options)
+    except ValueError:
+        return {"connectivity": connectivity, "options": options, "meta": meta}
 
 
 def _build_request(
@@ -392,6 +462,8 @@ class LlamaCppConnectivity:
 class LlamaCppGenerate:
     def __init__(self):
         self.saved_messages: list[dict[str, Any]] | None = None
+        self._cached_input_key: str | None = None
+        self._cached_output: tuple[Any, ...] | None = None
 
     @classmethod
     def INPUT_TYPES(cls):
@@ -419,6 +491,13 @@ class LlamaCppGenerate:
                 "images": ("IMAGE", {"forceInput": False}),
                 "context": ("LLAMACPP_HISTORY", {"forceInput": False}),
                 "meta": ("LLAMACPP_META", {"forceInput": False}),
+                "send_on_change_only": (
+                    "BOOLEAN",
+                    {
+                        "default": True,
+                        "tooltip": "When enabled, the previous llama.cpp response is reused if the prompt, system prompt, images, connection, and options have not changed.",
+                    },
+                ),
             },
         }
 
@@ -427,6 +506,37 @@ class LlamaCppGenerate:
     FUNCTION = "llamacpp_generate"
     CATEGORY = CATEGORY
     DESCRIPTION = "One-shot text or vision generation through llama.cpp /v1/chat/completions."
+
+    @classmethod
+    def IS_CHANGED(
+        cls,
+        system: str,
+        prompt: str,
+        think: bool,
+        keep_context: bool,
+        format: str,
+        max_tokens: int,
+        context: str | None = None,
+        options: dict[str, Any] | None = None,
+        connectivity: dict[str, Any] | None = None,
+        images: list[torch.Tensor] | None = None,
+        meta: dict[str, Any] | None = None,
+        send_on_change_only: bool = True,
+    ):
+        if not send_on_change_only:
+            return float("NaN")
+        return _llamacpp_input_key(
+            node_type="generate",
+            system=system,
+            prompt=prompt,
+            think=think,
+            output_format=format,
+            max_tokens=max_tokens,
+            meta=_cache_meta(meta, connectivity, options),
+            images=images,
+            context=context,
+            keep_context=keep_context,
+        )
 
     def llamacpp_generate(
         self,
@@ -441,9 +551,26 @@ class LlamaCppGenerate:
         connectivity: dict[str, Any] | None = None,
         images: list[torch.Tensor] | None = None,
         meta: dict[str, Any] | None = None,
+        send_on_change_only: bool = True,
     ):
         meta = _resolve_meta(meta, connectivity, options)
         debug_print = bool(meta.get("options", {}).get("debug")) if meta.get("options") else False
+        input_key = _llamacpp_input_key(
+            node_type="generate",
+            system=system,
+            prompt=prompt,
+            think=think,
+            output_format=format,
+            max_tokens=max_tokens,
+            meta=meta,
+            images=images,
+            context=context,
+            keep_context=keep_context,
+        )
+        if send_on_change_only and self._cached_input_key == input_key and self._cached_output is not None:
+            if debug_print:
+                print("--- llama.cpp generate cache hit; skipped request")
+            return self._cached_output
 
         messages = _parse_history(context)
         if keep_context and not messages and self.saved_messages is not None:
@@ -464,7 +591,11 @@ class LlamaCppGenerate:
         if keep_context:
             self.saved_messages = [dict(message) for message in messages]
 
-        return result, thinking if think else None, _history_to_string(messages), meta
+        output = (result, thinking if think else None, _history_to_string(messages), meta)
+        self._cached_input_key = input_key
+        self._cached_output = output
+
+        return output
 
 
 class LlamaCppChat:
@@ -494,6 +625,13 @@ class LlamaCppChat:
                 "meta": ("LLAMACPP_META", {"forceInput": False}),
                 "history": ("LLAMACPP_HISTORY", {"forceInput": False}),
                 "reset_session": ("BOOLEAN", {"default": False}),
+                "send_on_change_only": (
+                    "BOOLEAN",
+                    {
+                        "default": True,
+                        "tooltip": "When enabled, the previous llama.cpp response is reused if the prompt, system prompt, images, connection, and options have not changed.",
+                    },
+                ),
             },
             "hidden": {"unique_id": "UNIQUE_ID"},
         }
@@ -503,6 +641,38 @@ class LlamaCppChat:
     FUNCTION = "llamacpp_chat"
     CATEGORY = CATEGORY
     DESCRIPTION = "Multi-turn chat through llama.cpp /v1/chat/completions."
+
+    @classmethod
+    def IS_CHANGED(
+        cls,
+        system: str,
+        prompt: str,
+        think: bool,
+        unique_id: str,
+        format: str,
+        max_tokens: int,
+        options: dict[str, Any] | None = None,
+        connectivity: dict[str, Any] | None = None,
+        images: list[torch.Tensor] | None = None,
+        meta: dict[str, Any] | None = None,
+        history: str | None = None,
+        reset_session: bool = False,
+        send_on_change_only: bool = True,
+    ):
+        if not send_on_change_only:
+            return float("NaN")
+        return _llamacpp_input_key(
+            node_type="chat",
+            system=system,
+            prompt=prompt,
+            think=think,
+            output_format=format,
+            max_tokens=max_tokens,
+            meta=_cache_meta(meta, connectivity, options),
+            images=images,
+            history=history,
+            reset_session=reset_session,
+        )
 
     def llamacpp_chat(
         self,
@@ -518,10 +688,28 @@ class LlamaCppChat:
         meta: dict[str, Any] | None = None,
         history: str | None = None,
         reset_session: bool = False,
+        send_on_change_only: bool = True,
     ):
         meta = _resolve_meta(meta, connectivity, options)
         debug_print = bool(meta.get("options", {}).get("debug")) if meta.get("options") else False
         session_key = unique_id
+        input_key = _llamacpp_input_key(
+            node_type="chat",
+            system=system,
+            prompt=prompt,
+            think=think,
+            output_format=format,
+            max_tokens=max_tokens,
+            meta=meta,
+            images=images,
+            history=history,
+            reset_session=reset_session,
+        )
+        cached = CHAT_RESPONSE_CACHE.get(session_key)
+        if send_on_change_only and cached is not None and cached[0] == input_key:
+            if debug_print:
+                print("--- llama.cpp chat cache hit; skipped request")
+            return cached[1]
 
         if history:
             messages = _parse_history(history)
@@ -548,7 +736,10 @@ class LlamaCppChat:
         messages.append({"role": "assistant", "content": result})
         CHAT_SESSIONS[session_key] = ChatSession(messages=messages, model=meta["connectivity"]["model"])
 
-        return result, thinking if think else None, meta, _history_to_string(messages)
+        output = (result, thinking if think else None, meta, _history_to_string(messages))
+        CHAT_RESPONSE_CACHE[session_key] = (input_key, output)
+
+        return output
 
 
 def _resolve_meta(
